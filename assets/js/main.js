@@ -20,7 +20,17 @@ let isPlaying = false;
 let isRandom = false;
 let updateTimer;
 
-const music_list = [
+let audioContext;
+let analyser;
+let canvas;
+let ctx;
+let audioSource;
+let uploadedFiles = [];
+
+let eqFilters = [];
+let sleepTimer = null;
+
+let music_list = [
   {
     img: "assets/images/dice-1502706_640.jpg",
     name: "name",
@@ -34,6 +44,15 @@ const music_list = [
     music: "assets/music/random-acoustic-electronic-guitar-136427.mp3",
 
   },
+];
+
+const backgroundImages = [
+    "assets/images/dice-1502706_640.jpg",
+    "assets/images/Random-Pictures-of-Conceptual-and-Creative-Ideas-02.jpg",
+    "assets/images/music-1.jpg",
+    "assets/images/music-2.jpg",
+    "assets/images/music-3.jpg"
+    // Add more image paths as needed
 ];
 
 loadTrack(track_index);
@@ -53,6 +72,21 @@ function loadTrack(track_index) {
     "Playing music" + (track_index + 1) + " of " + music_list.length;
   updateTimer = setInterval(setUpdate, 1000);
   curr_track.addEventListener("ended", nextTrack);
+
+  if (!audioContext) {
+    initializeAudioVisualizer();
+  }
+  curr_track.addEventListener('loadeddata', () => {
+    if (audioContext && !audioSource) {
+      audioSource = audioContext.createMediaElement(curr_track);
+      audioSource.connect(analyser);
+      analyser.connect(audioContext.destination);
+    }
+    createVisualization();
+  });
+
+  updatePlaylist();
+  if (eqFilters.length > 0) initEqualizer();
 }
 
 function reset() {
@@ -78,6 +112,9 @@ function repeatTrack() {
   playTrack();
 }
 function playpauseTrack() {
+  if (audioContext && audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
   isPlaying ? pauseTrack() : playTrack();
 }
 
@@ -161,3 +198,157 @@ function setUpdate() {
     total_duration.textContent = durationMinutes + ":" + durationSeconds;
   }
 }
+
+function initializeAudioVisualizer() {
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    canvas = document.getElementById('visualizer');
+    ctx = canvas.getContext('2d');
+    
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+  } catch (e) {
+    console.error('Web Audio API is not supported in this browser', e);
+  }
+}
+
+function showNotification(message) {
+    const notification = document.getElementById('notification');
+    notification.textContent = message;
+    notification.classList.add('show');
+    
+    // Hide notification after 3 seconds
+    setTimeout(() => {
+        notification.classList.remove('show');
+    }, 3000);
+}
+
+function getRandomImage() {
+    const randomIndex = Math.floor(Math.random() * backgroundImages.length);
+    return backgroundImages[randomIndex];
+}
+
+document.getElementById('file-upload').addEventListener('change', function(e) {
+    const files = e.target.files;
+    let addedTracks = 0;
+    
+    for (let file of files) {
+        if (file.type.startsWith('audio/')) {
+            const fileURL = URL.createObjectURL(file);
+            music_list.push({
+                img: getRandomImage(), // Use random image instead of fixed one
+                name: file.name.replace(/\.[^/.]+$/, ""),
+                artist: 'Uploaded Track',
+                music: fileURL
+            });
+            addedTracks++;
+        }
+    }
+    
+    if (addedTracks > 0) {
+        showNotification(`Successfully added ${addedTracks} track${addedTracks > 1 ? 's' : ''} to playlist`);
+        if (music_list.length === addedTracks) {
+            loadTrack(0);
+            playTrack();
+        }
+    }
+});
+
+function createVisualization() {
+  if (!audioContext || !analyser || !canvas || !ctx) return;
+  
+  analyser.fftSize = 256;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  
+  function animate() {
+    requestAnimationFrame(animate);
+    if (!isPlaying) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    analyser.getByteFrequencyData(dataArray);
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const barWidth = (canvas.width / bufferLength) * 2.5;
+    let barHeight;
+    let x = 0;
+    
+    for (let i = 0; i < bufferLength; i++) {
+      barHeight = dataArray[i] * 1.5;
+      
+      const hue = (i * 360 / bufferLength) + (Date.now() * 0.05) % 360;
+      ctx.fillStyle = `hsl(${hue}, 80%, 50%)`;
+      
+      ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+      x += barWidth + 1;
+    }
+  }
+  animate();
+}
+
+function initEqualizer() {
+    const bands = [60, 230, 910]; // Frequency bands
+    eqFilters = bands.map(freq => {
+        const filter = audioContext.createBiquadFilter();
+        filter.type = "peaking";
+        filter.frequency.value = freq;
+        filter.gain.value = 0;
+        return filter;
+    });
+    
+    // Connect audio nodes: source -> filters -> analyser -> destination
+    audioSource.disconnect();
+    eqFilters.reduce((prev, curr) => {
+        prev.connect(curr);
+        return curr;
+    }, audioSource).connect(analyser);
+}
+
+function updatePlaylist() {
+    const container = document.querySelector('.playlist-items');
+    container.innerHTML = music_list.map((track, index) => `
+        <div class="playlist-item ${index === track_index ? 'playing' : ''}" 
+             data-index="${index}"
+             onclick="loadTrack(${index}); playTrack()">
+            <div>${track.name}</div>
+            <div class="artist">${track.artist}</div>
+        </div>
+    `).join('');
+}
+
+document.querySelectorAll('.eq-band').forEach(slider => {
+    slider.addEventListener('input', e => {
+        const band = parseInt(e.target.dataset.band);
+        eqFilters[band].gain.value = parseFloat(e.target.value);
+    });
+});
+
+document.querySelector('.timer-select').addEventListener('change', e => {
+    const minutes = parseInt(e.target.value);
+    if (sleepTimer) clearTimeout(sleepTimer);
+    if (minutes > 0) {
+        sleepTimer = setTimeout(() => {
+            pauseTrack();
+            showNotification(`Sleep timer ended - music stopped`);
+        }, minutes * 60000);
+    }
+});
+
+window.addEventListener('load', () => {
+    updatePlaylist();
+    initEqualizer();
+});
