@@ -54,7 +54,3 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## Testing
 
 No formal testing framework is included.  Testing is primarily manual through browser interaction.
-
-
-
-*README.md was made with [Etchr](https://etchr.dev)*
